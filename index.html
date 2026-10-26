@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#195c49">
+  <meta name="description" content="面向日常聊天的英语表达助手。保留原意，让表达更自然。当前为示例体验版。">
+  <title>言外 · 英语聊天助手</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23195c49'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-size='42' fill='white'%3E言%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar wrap">
+    <a class="brand" href="./" aria-label="言外首页"><span class="brand-icon">言</span><span>言外 <small>CHAT IN YOUR OWN WORDS</small></span></a>
+    <a class="help-link" href="#how-it-works">使用说明 <span aria-hidden="true">↗</span></a>
+  </header>
+  <main class="wrap">
+    <section class="intro">
+      <p class="eyebrow"><span></span> 为每一次真实的交流</p>
+      <h1>意思不变，<br class="mobile-break">表达更自然。</h1>
+      <p class="lead">用中文说出你的想法，用自然的英语继续聊天。</p>
+    </section>
+    <aside class="demo-banner"><span class="pill">示例体验</span><p>还未接入 AI 服务。先用下方例句体验语气与复制功能；自由输入暂不能翻译。</p></aside>
+    <div class="workspace">
+      <section class="card input-card" aria-labelledby="input-heading">
+        <div class="card-heading"><h2 id="input-heading"><span class="step">01</span> 你想说的话</h2><span class="lang-label">中文</span></div>
+        <label class="sr-only" for="source">输入中文消息</label>
+        <textarea id="source" maxlength="1000" placeholder="输入或粘贴你想说的中文…" spellcheck="false"></textarea>
+        <div class="input-meta"><button type="button" id="clear" class="text-button">清空</button><span id="count">0 / 1000</span></div>
+        <div class="examples"><span class="field-caption">没有想好？试试一句</span><div class="example-buttons"><button type="button" data-example="late">稍晚一点到</button><button type="button" data-example="decline">礼貌拒绝</button><button type="button" data-example="ambiguous">一句有歧义的话</button></div></div>
+        <div class="settings-row"><label for="tone">表达语气</label><select id="tone"><option value="natural">自然日常</option><option value="casual">轻松随意</option><option value="polite">礼貌得体</option></select></div>
+        <details class="context-section"><summary>补充聊天背景 <span>可选</span></summary><label for="context">对方说了什么？你们是什么关系？</label><textarea id="context" maxlength="1000" placeholder="例如：跟朋友约好吃饭，我正在路上。"></textarea><p>当前示例版不使用背景生成译文；接入 AI 后用于帮助理解原意。</p></details>
+        <button type="button" class="primary" id="translate">查看示例表达 <span aria-hidden="true">→</span></button>
+        <p class="under-button">当前输入仅停留在本页，不保存、不上传。</p>
+      </section>
+      <section class="card result-card" aria-labelledby="result-heading">
+        <div class="card-heading"><h2 id="result-heading"><span class="step">02</span> 英语表达</h2><span class="lang-label">English</span></div>
+        <div id="empty-state" class="empty-state"><div class="chat-art" aria-hidden="true"><span>你好。</span><span>Hello.</span></div><h3>从一句话，开始交流</h3><p>选择左侧例句，再点击“查看示例表达”。<br>英文、对应原意与语气说明会出现在这里。</p><span class="empty-tag">保留原意 · 自然表达 · 发送前核对</span></div>
+        <div id="result" hidden>
+          <div class="result-meta"><span class="result-dot"></span><span id="result-label">预置示例 · 自然日常</span></div>
+          <p id="english" lang="en" class="english"></p>
+          <div class="explanation"><h3>这句话表达的意思</h3><p id="meaning"></p><h3>语气小提示</h3><p id="tone-note"></p></div>
+          <button type="button" class="copy-button" id="copy">复制英文 <span aria-hidden="true">⧉</span></button>
+          <p class="result-footnote">示例未经实时模型复核。发送前请对照你的真实意思。</p>
+        </div>
+        <div id="clarification" class="clarification" hidden><span class="question-icon" aria-hidden="true">?</span><h3>先确认一下你的意思</h3><p>“方便吗”可能是在问时间，也可能是在问能否帮忙。选择你真正想表达的意思：</p><div id="choices"><button type="button" data-choice="time">你现在有时间聊一下吗？</button><button type="button" data-choice="help">你现在方便帮我个忙吗？</button></div><p class="clarification-note">这是预置的歧义示例；尚不具备自动识别任意歧义的能力。</p></div>
+        <div id="notice" class="notice" role="status" hidden></div>
+      </section>
+    </div>
+    <section class="how" id="how-it-works" aria-labelledby="how-heading"><h2 id="how-heading">在微信聊天中，怎么用？</h2><div class="how-grid"><article><span>01 / 输入</span><h3>写下你想说的话</h3><p>中文消息与必要的上下文，帮助保留你真正的意思。</p></article><article><span>02 / 核对</span><h3>确认原意和语气</h3><p>尤其留意人物、时间、否定和承诺；有歧义就先澄清。</p></article><article><span>03 / 发送</span><h3>复制回微信</h3><p>点击复制英文，回到微信输入框粘贴，再自行发送。</p></article></div></section>
+    <footer><span>言外 <span class="footer-dot">·</span> 把你的意思，好好说出来。</span><p>示例体验版 · 无法读取微信聊天 · AI 翻译也不能保证零误译</p></footer>
+  </main>
+</body>
+</html>
