@@ -1,53 +1,33 @@
 'use strict';
 
-// Deliberately local, curated examples. No model request or chat storage.
-const samples = {
-  late: {
-    source: '我可能会晚到十分钟，你们先点菜吧，不用等我。',
-    meaning: '我可能会晚到十分钟；你们可以先点菜，不必等我到了再点。',
-    versions: {
-      natural: ["I might be about ten minutes late. Go ahead and order—no need to wait for me.", '自然、友好。“might”保留了“可能”，没有把不确定的时间说成确定承诺。'],
-      casual: ["Might be about ten minutes late. Go ahead and order without me!", '省略句首的 I，更像熟人之间的即时消息。“order without me”在这里指先点菜。'],
-      polite: ["I may be about ten minutes late. Please go ahead and order; there's no need to wait for me.", '完整句式加上 please，表达更礼貌，同时保留不确定性。']
-    }
-  },
-  decline: {
-    source: '谢谢你邀请我，但我今晚已经有安排了。改天再约吧。',
-    meaning: '感谢对方的邀请；今晚已有安排，不能赴约，希望换一天再约。',
-    versions: {
-      natural: ["Thanks for inviting me, but I already have plans tonight. Let's get together another time.", '友好地拒绝今晚的邀请，并表达改天再约的意愿；没有编造具体原因或日期。'],
-      casual: ["Thanks for the invite! I've already got plans tonight, but let's hang out another time.", '“Thanks for the invite”和“hang out”适合朋友间比较轻松的交流。'],
-      polite: ["Thank you for the invitation. I already have plans this evening, but I'd be happy to get together another time.", '更完整、礼貌，适合不太熟悉的对象；改天见面的意愿也更明确。']
-    }
-  },
-  ambiguous: { source: '你现在方便吗？' },
-  time: {
-    source: '你现在有时间聊一下吗？',
-    meaning: '询问对方此刻是否有时间简短聊一下。',
-    versions: {
-      natural: ['Do you have a moment to chat?', '自然地询问对方有没有时间聊天。'],
-      casual: ['Got a minute to chat?', '熟人聊天中的简短口语表达。'],
-      polite: ['Would now be a good time for a quick chat?', '先询问时间是否合适，语气更体贴。']
-    }
-  },
-  help: {
-    source: '你现在方便帮我个忙吗？',
-    meaning: '询问对方现在是否方便帮自己一个忙。',
-    versions: {
-      natural: ['Could you help me with something right now?', '明确是在请求帮忙，而非泛泛询问是否有空。'],
-      casual: ['Can you give me a hand with something right now?', '“give me a hand”是口语中自然的“帮我个忙”。'],
-      polite: ['Would you be able to help me with something right now?', '礼貌地询问能否帮忙，保留“现在”的时间要求。']
-    }
-  }
+// Public endpoint only. Never put model keys or access passwords in this file.
+const API_ENDPOINT = 'https://english-chat-api.suansuan627.workers.dev/translate';
+const examples = {
+  late: '我可能会晚到十分钟，你们先点菜吧，不用等我。',
+  decline: '谢谢你邀请我，但我今晚已经有安排了。改天再约吧。',
+  ambiguous: '你现在方便吗？'
 };
 const $ = id => document.getElementById(id);
 let currentEnglish = '';
+let revision = 0;
+let activeRequest = null;
+
+function busy(value) {
+  $('translate').disabled = value;
+  $('translate').textContent = value ? '正在翻译与复核…' : '翻译并核对原意 →';
+  $('cancel').hidden = !value;
+  $('loading').hidden = !value;
+  $('result-heading').setAttribute('aria-busy', String(value));
+}
 function resetResult() {
+  revision++;
+  activeRequest?.abort();
+  activeRequest = null;
+  busy(false);
   currentEnglish = '';
-  $('english').textContent = '';
-  $('result').hidden = true;
-  $('clarification').hidden = true;
-  $('notice').hidden = true;
+  for (const id of ['english', 'meaning', 'tone-note', 'question', 'notice', 'result-label']) $(id).textContent = '';
+  $('warnings').replaceChildren();
+  for (const id of ['result', 'clarification', 'notice', 'warnings-section']) $(id).hidden = true;
   $('empty-state').hidden = false;
   $('copy').textContent = '复制英文 ⧉';
 }
@@ -61,73 +41,124 @@ function showNotice(message) {
 }
 function revealResult() {
   if (window.matchMedia('(max-width: 700px)').matches) {
-    $('result-heading').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('result-heading').scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
   }
 }
-function translate() {
+function validText(value, max) { return typeof value === 'string' && !!value.trim() && value.length <= max; }
+function validResult(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (data.status === 'clarification') return validText(data.question, 800);
+  return data.status === 'translated' && data.review === 'model-reviewed'
+    && validText(data.english, 6000) && validText(data.meaning, 3000) && validText(data.toneNote, 1000)
+    && Array.isArray(data.warnings) && data.warnings.length <= 6 && data.warnings.every(w => validText(w, 500));
+}
+function errorMessage(code, status) {
+  const messages = {
+    UNAUTHORIZED: '访问口令不正确。请填写 Cloudflare 的 APP_PASSWORD，而不是 DeepSeek 密钥。',
+    NOT_CONFIGURED: '后端配置未完成。请检查两个 Secret 的名称，以及 APP_PASSWORD 是否为 24–128 位英文字母、数字、- 或 _。',
+    MODEL_BALANCE: 'DeepSeek 可用余额不足。请到 DeepSeek 开放平台检查余额，再决定是否小额充值测试。',
+    MODEL_AUTH: 'DeepSeek 密钥无效或无权限。请检查 Cloudflare 中的 DEEPSEEK_API_KEY。',
+    MODEL_BUSY: '模型服务繁忙，请稍后再试。',
+    RATE_LIMITED: '请求过于频繁，请稍后再试。',
+    MODEL_UNAVAILABLE: '模型服务暂时不可用，请稍后再试。',
+    TRANSLATION_FAILED: '翻译或复核未完成，因此没有显示未经复核的草稿。请稍后再试。',
+    TIMEOUT: '翻译或复核超时，未显示草稿。请稍后重试；已发生的调用可能仍计费。',
+    ORIGIN_DENIED: '请通过正式的 GitHub Pages 网站使用，不要直接双击本地 HTML 文件。',
+    INVALID_INPUT: '请输入 1–1000 字的消息，背景也请控制在 1000 字以内。',
+    TOO_LARGE: '消息过长，请缩短后再试。'
+  };
+  return Object.hasOwn(messages, code) ? messages[code] : `服务请求失败（${status}），请稍后再试。`;
+}
+async function translate() {
+  if (activeRequest) return;
   resetResult();
   const source = $('source').value.trim();
-  if (!source) {
-    showNotice('请先选择一句示例，或输入你想说的话。');
+  const context = $('context').value.trim();
+  if (!source || source.length > 1000 || context.length > 1000) {
+    showNotice('请输入 1–1000 字的中文消息；聊天背景最多 1000 字。');
     $('source').focus();
     return;
   }
-  // Exact match only. Never pretend a similar input has the same meaning.
-  const entry = Object.values(samples).find(item => item.source === source);
-  if (!entry || $('context').value.trim()) {
-    $('empty-state').hidden = true;
-    showNotice('当前是示例体验版，还不能翻译自由输入的消息或结合聊天背景生成结果。请点击上方例句，并清空补充背景后体验。接入 AI 服务后才能处理你的实际消息。');
-    revealResult();
+  if (!/^[A-Za-z0-9_-]{24,128}$/.test($('password').value)) {
+    showNotice('请先填写你设置的 APP_PASSWORD：24–128 位英文字母、数字、- 或 _，不要包含空格。不要填写 DeepSeek 密钥。');
+    $('password').focus();
     return;
   }
-  $('empty-state').hidden = true;
-  if (!entry.versions) {
-    $('clarification').hidden = false;
-    revealResult();
+  if (!$('consent').checked) {
+    showNotice('请先阅读并勾选发送消息给 AI 服务的说明，再开始翻译。');
+    $('consent').focus();
     return;
   }
+  const controller = new AbortController();
+  activeRequest = controller;
+  const requestRevision = revision;
   const tone = $('tone').value;
-  const [english, note] = entry.versions[tone];
-  currentEnglish = english;
-  $('english').textContent = english;
-  $('meaning').textContent = entry.meaning;
-  $('tone-note').textContent = note;
-  $('result-label').textContent = '预置示例 · ' + $('tone').selectedOptions[0].textContent;
-  $('result').hidden = false;
+  const toneLabel = $('tone').selectedOptions[0].textContent;
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 65000);
+  busy(true);
+  $('empty-state').hidden = true;
   revealResult();
+  try {
+    const response = await fetch(API_ENDPOINT, {
+      method: 'POST', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${$('password').value}` },
+      body: JSON.stringify({ source, context, tone }), signal: controller.signal
+    });
+    if (requestRevision !== revision) return;
+    const data = await response.json();
+    if (requestRevision !== revision) return;
+    if (!response.ok) { showNotice(errorMessage(data?.error, response.status)); return; }
+    if (!validResult(data)) { showNotice('服务返回的结果不完整，未显示译文。请稍后再试。'); return; }
+    if (data.status === 'clarification') {
+      $('question').textContent = data.question;
+      $('clarification').hidden = false;
+      return;
+    }
+    currentEnglish = data.english;
+    $('english').textContent = data.english;
+    $('meaning').textContent = data.meaning;
+    $('tone-note').textContent = data.toneNote;
+    $('result-label').textContent = '已进行模型复核 · ' + toneLabel;
+    for (const warning of data.warnings) {
+      const item = document.createElement('li');
+      item.textContent = warning;
+      $('warnings').append(item);
+    }
+    $('warnings-section').hidden = data.warnings.length === 0;
+    $('result').hidden = false;
+  } catch {
+    if (requestRevision !== revision) return;
+    showNotice(timedOut ? errorMessage('TIMEOUT') : '未能完成请求。请检查网络，或在浏览器中打开后端地址确认能否访问；不要反复点击。');
+  } finally {
+    clearTimeout(timer);
+    if (requestRevision === revision) { activeRequest = null; busy(false); }
+  }
 }
 document.querySelectorAll('[data-example]').forEach(button => {
-  button.addEventListener('click', () => {
-    $('source').value = samples[button.dataset.example].source;
-    updateInput();
-    $('source').focus();
-  });
-});
-document.querySelectorAll('[data-choice]').forEach(button => {
-  button.addEventListener('click', () => {
-    $('source').value = samples[button.dataset.choice].source;
-    updateInput();
-    translate();
-  });
+  button.addEventListener('click', () => { $('source').value = examples[button.dataset.example]; updateInput(); $('source').focus(); });
 });
 $('source').addEventListener('input', updateInput);
 $('context').addEventListener('input', resetResult);
+$('password').addEventListener('input', resetResult);
 $('tone').addEventListener('change', resetResult);
-$('clear').addEventListener('click', () => {
-  $('source').value = '';
-  updateInput();
-  $('source').focus();
-});
+$('consent').addEventListener('change', resetResult);
+$('clear').addEventListener('click', () => { $('source').value = ''; updateInput(); $('source').focus(); });
+$('forget-password').addEventListener('click', () => { $('password').value = ''; resetResult(); $('password').focus(); });
+$('cancel').addEventListener('click', () => { resetResult(); showNotice('已取消等待。已经发出的模型请求可能仍会计费。'); });
+$('add-context').addEventListener('click', () => { $('context-section').open = true; $('context').focus(); });
 $('translate').addEventListener('click', translate);
+window.addEventListener('pagehide', () => { $('password').value = ''; $('consent').checked = false; resetResult(); });
 $('copy').addEventListener('click', async () => {
   if (!currentEnglish) return;
   const value = currentEnglish;
+  const copyRevision = revision;
   try {
     if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
     await navigator.clipboard.writeText(value);
-    if (currentEnglish === value) $('copy').textContent = '已复制，可以粘贴到微信 ✓';
+    if (copyRevision === revision) $('copy').textContent = '已复制，可以粘贴到微信 ✓';
   } catch {
-    if (currentEnglish !== value) return;
+    if (copyRevision !== revision) return;
     const range = document.createRange();
     range.selectNodeContents($('english'));
     const selection = window.getSelection();
